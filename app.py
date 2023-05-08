@@ -15,10 +15,13 @@ args = vars(parser.parse_args())
 
 # Récupération des informations dans le fichier de config
 config = configparser.ConfigParser()
-config.read('test_config.ini')
+config.read('config.ini')
 pages = config.getint('DEFAULT', 'PAGES')
 database_id = config.get('DEFAULT', 'DATABASE_ID')
 notion_token = config.get('DEFAULT', 'NOTION_TOKEN')
+infomaniak_access_token = config.get('DEFAULT', 'INFOMANIAK_ACCESS_TOKEN')
+infomaniak_secret_token = config.get('DEFAULT', 'INFOMANIAK_SECRET_TOKEN')
+mailing_list_id = config.get('DEFAULT', 'MAILING_LIST_ID')
 
 # Création des variables pour connexion à Notion
 headers = {
@@ -26,6 +29,8 @@ headers = {
     "Content-Type": "application/json",
     "Notion-Version": "2021-05-13"
 }
+
+
 
 # Configuration de la base de données
 conn = sqlite3.connect('contacts.db')
@@ -109,14 +114,39 @@ def send2localdb(json_data):
             cursor.execute("SELECT email FROM contacts WHERE email=?", (contact['email'],))
             result = cursor.fetchone()
             if result is None:
-                conn.execute("INSERT INTO contacts (nom, prenom, email) VALUES (?, ?, ?)",
-                            (contact['nom'], contact['prenom'], contact['email']))
-                print(f"{contact['email']} ajoutée !")
+                if contact2infomaniak(contact, mailing_list_id, infomaniak_access_token ,infomaniak_secret_token) == "success":
+                    conn.execute("INSERT INTO contacts (nom, prenom, email) VALUES (?, ?, ?)",
+                                (contact['nom'], contact['prenom'], contact['email']))
+                    print(f"{contact['email']} ajoutée !")
+                else:
+                    print(f"Une erreur est survenue pour la création de {contact['email']} !")
         except:
             pass
     conn.commit()
     conn.close()
     return success, failed
+
+# Création du contact dans la mailing list Infomaniak
+def contact2infomaniak(contact,mailing_list_id,infomaniak_access_token,infomaniak_secret_token):
+    url = f"https://newsletter.infomaniak.com/api/v1/public/mailinglist/{mailing_list_id}/importcontact"
+    headers = {
+        "Content-Type": "application/json"
+    }
+    auth = (infomaniak_access_token, infomaniak_secret_token)
+    data = {
+        "contacts": [
+            {
+                "email": contact['email'],
+                "Nom": contact['nom'],
+                "firstname": contact['prenom']
+            }
+        ]
+    }
+    try:
+        response = requests.post(url, headers=headers, auth=auth, json=data)
+        return response.json()['result']
+    except:
+        return "error"
 
 
 # Let's go
