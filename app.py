@@ -49,6 +49,7 @@ def readDatabase(databaseId, headers, pages):
     readUrl = f"https://api.notion.com/v1/databases/{databaseId}/query"
     if args['all']:
         nb_pages=0
+        print("\nRécupération des données Notion en cours ... ")
         pbar = tqdm(total=pages)
 
         results = []
@@ -108,22 +109,31 @@ def send2localdb(json_data):
         except:
             failed+=1
 
-    for contact in contacts:
-        try:
+    t_contacts = len(contacts) 
+    nb_contacts=0
+    print(f"\nTraitement des {t_contacts} contacts en cours ... ")
+    pbar = tqdm(total=t_contacts)
 
+    for contact in contacts:
+        nb_contacts+=1
+        pbar.update(1)
+
+        try:
             cursor.execute("SELECT email FROM contacts WHERE email=?", (contact['email'],))
             result = cursor.fetchone()
             if result is None:
                 if contact2infomaniak(contact, mailing_list_id, infomaniak_access_token ,infomaniak_secret_token) == "success":
                     conn.execute("INSERT INTO contacts (nom, prenom, email) VALUES (?, ?, ?)",
                                 (contact['nom'], contact['prenom'], contact['email']))
-                    print(f"{contact['email']} ajoutée !")
+                    #print(f"{contact['email']} ajoutée à Infomaniak !")
                 else:
-                    print(f"Une erreur est survenue pour la création de {contact['email']} !")
+                    pass
+                    #print(f"Une erreur est survenue pour la création de {contact['email']} !")
         except:
             pass
     conn.commit()
     conn.close()
+    pbar.close()
     return success, failed
 
 # Création du contact dans la mailing list Infomaniak
@@ -152,5 +162,5 @@ def contact2infomaniak(contact,mailing_list_id,infomaniak_access_token,infomania
 # Let's go
 json_data = readDatabase(database_id, headers, pages)
 success, failed = send2localdb(json_data)
-print(f"Mails trouvés : {success}")
+print(f"\nMails trouvés : {success}")
 print(f"Contacts mal renseignés: {failed}")
