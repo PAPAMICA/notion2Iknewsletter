@@ -10,6 +10,7 @@ import re
 # Help et arguments
 parser = argparse.ArgumentParser(description='Import contact to newsletter Infomaniak from Notion database.')
 parser.add_argument('--all', action='store_true', help='Check all databases, not just 100 last.')
+parser.add_argument('--pull', action='store_true', help='Retreive contact list from Infomaniak.')
 args = vars(parser.parse_args())
 
 
@@ -90,51 +91,6 @@ def readDatabase(databaseId, headers, pages):
         results = json_data["results"]
     return results
 
-# Envoi des données vers contacts.db
-def send2localdb(json_data):
-    success = 0
-    failed = 0
-    contacts = []
-    for result in json_data:
-        try:
-            nom = result["properties"]["Nom"]["title"][0]["text"]["content"]
-            prenom = result["properties"]["Prénom"]["rich_text"][0]["text"]["content"]
-            email = result["properties"]["mail"]["email"]
-            if re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                contacts.append({"nom": nom, "prenom": prenom, "email": email})
-                success+=1
-            else:
-                failed+=1
-
-        except:
-            failed+=1
-
-    t_contacts = len(contacts) 
-    nb_contacts=0
-    print(f"\nTraitement des {t_contacts} contacts en cours ... ")
-    pbar = tqdm(total=t_contacts)
-
-    for contact in contacts:
-        nb_contacts+=1
-        pbar.update(1)
-
-        try:
-            cursor.execute("SELECT email FROM contacts WHERE email=?", (contact['email'],))
-            result = cursor.fetchone()
-            if result is None:
-                if contact2infomaniak(contact, mailing_list_id, infomaniak_access_token ,infomaniak_secret_token) == "success":
-                    conn.execute("INSERT INTO contacts (nom, prenom, email) VALUES (?, ?, ?)",
-                                (contact['nom'], contact['prenom'], contact['email']))
-                    #print(f"{contact['email']} ajoutée à Infomaniak !")
-                else:
-                    pass
-                    #print(f"Une erreur est survenue pour la création de {contact['email']} !")
-        except:
-            pass
-    conn.commit()
-    conn.close()
-    pbar.close()
-    return success, failed
 
 # Création du contact dans la mailing list Infomaniak
 def contact2infomaniak(contact,mailing_list_id,infomaniak_access_token,infomaniak_secret_token):
@@ -158,9 +114,88 @@ def contact2infomaniak(contact,mailing_list_id,infomaniak_access_token,infomania
     except:
         return "error"
 
+def getContactListFromIK(mailing_list_id,infomaniak_access_token,infomaniak_secret_token):
+    url = f"https://newsletter.infomaniak.com/api/v1/public/mailinglist/{mailing_list_id}/contact?perPage=10000"
+    headers = {
+        "Content-Type": "application/json"
+    }
+    auth = (infomaniak_access_token, infomaniak_secret_token)
+    contacts = []
+    try:
+        response = requests.get(url, headers=headers, auth=auth)
+        for contact in response.json()['data']['data']:
+            nom = "ik"
+            prenom = "ik"
+            email = contact["email"]
+            if re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                contacts.append({"nom": nom, "prenom": prenom, "email": email})
+        return contacts
+    except:
+        print("error")
+
+
+def formatNotion(json_data):
+    success = 0
+    failed = 0
+    contacts = []
+    for contact in json_data:
+        try:
+            nom = contact["properties"]["Nom"]["title"][0]["text"]["content"]
+            prenom = contact["properties"]["Prénom"]["rich_text"][0]["text"]["content"]
+            email = contact["properties"]["mail"]["email"]
+            if re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                contacts.append({"nom": nom, "prenom": prenom, "email": email})
+                success+=1
+            else:
+                failed+=1
+
+        except:
+            failed+=1
+    return contacts, success, failed
+
+
+def checkExist(contact):
+    try:
+        cursor.execute("SELECT email FROM contacts WHERE email=?", (contact['email'],))
+        result = cursor.fetchone()
+        if result is None:
+            return False
+        else:
+            return True
+    except:
+        pass
+
+
+def send2localdb(contact):
+    try:
+        conn.execute("INSERT INTO contacts (nom, prenom, email) VALUES (?, ?, ?)",
+                    (contact['nom'], contact['prenom'], contact['email']))
+        print(f"{contact['email']} ajoutée à la base de données !")
+    except:
+        pass
 
 # Let's go
-json_data = readDatabase(database_id, headers, pages)
-success, failed = send2localdb(json_data)
-print(f"\nMails trouvés : {success}")
-print(f"Contacts mal renseignés: {failed}")
+if args['pull']:
+    contacts = getContactListFromIK(mailing_list_id,infomaniak_access_token,infomaniak_secret_token)
+    print(f"\nTraitement des {len(contacts)} contacts en cours ... ")
+    pbar = tqdm(total=len(contacts))
+    for contact in contacts:
+        pbar.update(1)
+        if not checkExist(contact):
+                send2localdb(contact)
+    pbar.close()
+    conn.commit()
+    conn.close()
+else:
+    json_data = readDatabase(database_id, headers, pages)
+    contacts, success, failed = formatNotion(json_data)
+    print(f"\nTraitement des {len(contacts)} contacts en cours ... ")
+    pbar = tqdm(total=len(contacts))
+    for contact in contacts:
+        pbar.update(1)
+        if not checkExist(contact):
+            if contact2infomaniak(contact, mailing_list_id, infomaniak_access_token ,infomaniak_secret_token) == "success":
+                send2localdb(contact)
+    pbar.close()
+    print(f"\nMails trouvés : {success}")
+    print(f"Contacts mal renseignés: {failed}")
